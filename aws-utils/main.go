@@ -1,16 +1,7 @@
-// A generated module for AwsUtils functions
+// A set of utilities for working with AWS services.
 //
-// This module has been generated via dagger init and serves as a reference to
-// basic module structure as you get started with Dagger.
-//
-// Two functions have been pre-created. You can modify, delete, or add to them,
-// as needed. They demonstrate usage of arguments and return types using simple
-// echo and grep commands. The functions can be called from the dagger CLI or
-// from one of the SDKs.
-//
-// The first line in this comment block is a short description line and the
-// rest is a long description with more detail on the module's purpose or usage,
-// if appropriate. All modules should have a short description.
+// Retrieve AWS credentials for a specific profile. Helpful for authenticating with AWS when there are multiple SSO profiles.
+// Get ECR credentials for authenticating of simply push container images to ECR.
 
 package main
 
@@ -76,6 +67,7 @@ func (m *AwsUtils) RetrieveCredentials(ctx context.Context, awsDir *dagger.Direc
 	return cred, nil
 }
 
+// GetEcrToken retrieves an ECR token for the given profile. The token consists of username, password and endpoint.
 func (m *AwsUtils) GetEcrToken(ctx context.Context, awsDir *dagger.Directory, awsProfile string) (EcrToken, error) {
 	out, err := m.util(ctx, awsDir, awsProfile, []string{pkg.CommandEcrGetToken}).Stdout(ctx)
 	if err != nil {
@@ -88,6 +80,7 @@ func (m *AwsUtils) GetEcrToken(ctx context.Context, awsDir *dagger.Directory, aw
 	return tok, nil
 }
 
+// PushToEcr pushes a container image to ECR. It returns a list of references for the pushed images.
 func (m *AwsUtils) PushToEcr(ctx context.Context, container *dagger.Container, awsDir *dagger.Directory, awsProfile string, imageName string, tags []string) ([]string, error) {
 	token, err := m.GetEcrToken(ctx, awsDir, awsProfile)
 	if err != nil {
