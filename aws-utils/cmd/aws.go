@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
@@ -86,19 +89,35 @@ func getECRToken(ctx context.Context, profile string) error {
 
 	svc := ecr.NewFromConfig(cfg)
 
-	// Get the token
-	token, err := svc.GetAuthorizationToken(ctx, &ecr.GetAuthorizationTokenInput{})
+	// Get the tokenResponse
+	tokenResponse, err := svc.GetAuthorizationToken(ctx, &ecr.GetAuthorizationTokenInput{})
 	if err != nil {
 		return err
 	}
 
-	if len(token.AuthorizationData) == 0 {
+	if len(tokenResponse.AuthorizationData) == 0 {
 		return fmt.Errorf("no authorization data found")
 	}
 
+	token := *tokenResponse.AuthorizationData[0].AuthorizationToken
+	proxyEndpoint := *tokenResponse.AuthorizationData[0].ProxyEndpoint
+
+	tokenDecoded, err := base64.StdEncoding.DecodeString(token)
+	if err != nil {
+		return fmt.Errorf("failed to decode ECR tokenResponse: %w", err)
+	}
+
+	username, password, _ := strings.Cut(string(tokenDecoded), ":")
+
+	endpointUrl, err := url.Parse(proxyEndpoint)
+	if err != nil {
+		return fmt.Errorf("failed to parse ECR endpoint: %w", err)
+	}
+
 	output := pkg.EcrToken{
-		Token:         *token.AuthorizationData[0].AuthorizationToken,
-		ProxyEndpoint: *token.AuthorizationData[0].ProxyEndpoint,
+		Username: username,
+		Password: password,
+		Endpoint: endpointUrl.Host,
 	}
 	err = json.NewEncoder(os.Stdout).Encode(output)
 	if err != nil {

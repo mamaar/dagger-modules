@@ -17,8 +17,9 @@ type Credentials struct {
 }
 
 type EcrToken struct {
-	Token         string `json:"token"`
-	ProxyEndpoint string `json:"proxy_endpoint"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Endpoint string `json:"endpoint"`
 }
 
 type Error struct {
