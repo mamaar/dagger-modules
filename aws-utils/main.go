@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"dagger/aws-utils/internal/dagger"
 	"dagger/aws-utils/pkg"
@@ -85,4 +86,26 @@ func (m *AwsUtils) GetEcrToken(ctx context.Context, awsDir *dagger.Directory, aw
 	tok := EcrToken{}
 	_ = json.Unmarshal([]byte(out), &tok)
 	return tok, nil
+}
+
+func (m *AwsUtils) PushToEcr(ctx context.Context, container *dagger.Container, awsDir *dagger.Directory, awsProfile string, imageName string, tags []string) ([]string, error) {
+	token, err := m.GetEcrToken(ctx, awsDir, awsProfile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ECR token: %w", err)
+	}
+
+	secret := dag.SetSecret("ecr-token", token.Password)
+
+	var refs []string
+	for _, tag := range tags {
+		uri := fmt.Sprintf("%s/%s:%s", token.Endpoint, imageName, tag)
+		ref, err := container.
+			WithRegistryAuth(token.Endpoint, token.Username, secret).
+			Publish(ctx, uri)
+		if err != nil {
+			return nil, fmt.Errorf("failed to push image: %w", err)
+		}
+		refs = append(refs, ref)
+	}
+	return refs, nil
 }
