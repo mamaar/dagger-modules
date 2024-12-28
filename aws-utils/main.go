@@ -28,23 +28,23 @@ const (
 
 type AwsUtils struct{}
 
-func (m *AwsUtils) util(ctx context.Context, awsDir *dagger.Directory, awsProfile string, source *dagger.Directory, command []string) *dagger.Container {
+func (m *AwsUtils) util(ctx context.Context, awsDir *dagger.Directory, awsProfile string, command []string) *dagger.Container {
 	cacheVolume := dag.CacheVolume(CacheVolume)
 	return dag.Container().
 		From(GoImage).
 		WithMountedCache("/go/pkg", cacheVolume).
 		WithDirectory("/root/.aws", awsDir).
 		WithEnvVariable("AWS_PROFILE", awsProfile).
-		WithDirectory("/app", source).
+		WithDirectory("/app", dag.CurrentModule().Source()).
 		WithWorkdir("/app/dagger").
 		WithExec(append([]string{"go", "run", "dagger/aws-utils/cmd"}, command...))
 }
 
 // RetrieveCredentials retrieves AWS credentials for the given profile
-func (m *AwsUtils) RetrieveCredentials(ctx context.Context, source *dagger.Directory, awsDir *dagger.Directory, awsProfile string) (string, error) {
-	return m.util(ctx, awsDir, awsProfile, source, []string{pkg.CommandRetrieveCredentials}).Stdout(ctx)
+func (m *AwsUtils) RetrieveCredentials(ctx context.Context, awsDir *dagger.Directory, awsProfile string) (string, error) {
+	return m.util(ctx, awsDir, awsProfile, []string{pkg.CommandRetrieveCredentials}).Stdout(ctx)
 }
 
-func (m *AwsUtils) GetEcrToken(ctx context.Context, source *dagger.Directory, awsDir *dagger.Directory, awsProfile string) (string, error) {
-	return m.util(ctx, awsDir, awsProfile, source, []string{pkg.CommandEcrGetToken}).Stdout(ctx)
+func (m *AwsUtils) GetEcrToken(ctx context.Context, awsDir *dagger.Directory, awsProfile string) (string, error) {
+	return m.util(ctx, awsDir, awsProfile, []string{pkg.CommandEcrGetToken}).Stdout(ctx)
 }
