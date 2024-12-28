@@ -17,12 +17,12 @@ func main() {
 
 	profile, hasProfile := os.LookupEnv("AWS_PROFILE")
 	if !hasProfile {
-		_, _ = os.Stderr.WriteString("AWS_PROFILE environment variable is not set\n")
+		_, _ = os.Stdout.Write(pkg.JSONError(fmt.Errorf("AWS profile is not set")))
 		os.Exit(1)
 	}
 
 	if len(os.Args) == 1 {
-		_, _ = os.Stderr.WriteString("No command provided\n")
+		_, _ = os.Stdout.Write(pkg.JSONError(fmt.Errorf("no command provided")))
 		os.Exit(1)
 	}
 
@@ -31,17 +31,17 @@ func main() {
 	case pkg.CommandRetrieveCredentials:
 		err = retrieveCredentials(profile)
 		if err != nil {
-			_, _ = os.Stderr.WriteString(err.Error())
+			_, _ = os.Stdout.Write(pkg.JSONError(err))
 			os.Exit(1)
 		}
 	case pkg.CommandEcrGetToken:
 		err = getECRToken(ctx, profile)
 		if err != nil {
-			_, _ = os.Stderr.WriteString(err.Error())
+			_, _ = os.Stdout.Write(pkg.JSONError(err))
 			os.Exit(1)
 		}
 	default:
-		_, _ = os.Stderr.WriteString("Unknown command\n")
+		_, _ = os.Stdout.Write(pkg.JSONError(fmt.Errorf("unknown command: %s", os.Args[1])))
 		os.Exit(1)
 	}
 }

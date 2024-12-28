@@ -1,5 +1,9 @@
 package pkg
 
+import (
+	"encoding/json"
+)
+
 const (
 	CommandRetrieveCredentials = "retrieve-credentials"
 	CommandEcrGetToken         = "ecr-get-token"
@@ -15,4 +19,17 @@ type Credentials struct {
 type EcrToken struct {
 	Token         string `json:"token"`
 	ProxyEndpoint string `json:"proxy_endpoint"`
+}
+
+type Error struct {
+	Message string `json:"message"`
+}
+
+func (e Error) Error() string {
+	return e.Message
+}
+
+func JSONError(err error) []byte {
+	b, _ := json.Marshal(Error{Message: err.Error()})
+	return b
 }

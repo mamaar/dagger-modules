@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 
 	"dagger/aws-utils/internal/dagger"
 	"dagger/aws-utils/pkg"
@@ -25,6 +26,26 @@ const (
 	GoImage     = "golang:1.23"
 	CacheVolume = "aws"
 )
+
+type Credentials struct {
+	AccessKeyID     string `json:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key"`
+	SessionToken    string `json:"session_token"`
+	Region          string `json:"region"`
+}
+
+type EcrToken struct {
+	Token         string `json:"token"`
+	ProxyEndpoint string `json:"proxy_endpoint"`
+}
+
+type Error struct {
+	Message string `json:"message"`
+}
+
+func (e Error) Error() string {
+	return e.Message
+}
 
 type AwsUtils struct{}
 
@@ -41,10 +62,26 @@ func (m *AwsUtils) util(ctx context.Context, awsDir *dagger.Directory, awsProfil
 }
 
 // RetrieveCredentials retrieves AWS credentials for the given profile
-func (m *AwsUtils) RetrieveCredentials(ctx context.Context, awsDir *dagger.Directory, awsProfile string) (string, error) {
-	return m.util(ctx, awsDir, awsProfile, []string{pkg.CommandRetrieveCredentials}).Stdout(ctx)
+func (m *AwsUtils) RetrieveCredentials(ctx context.Context, awsDir *dagger.Directory, awsProfile string) (Credentials, error) {
+	out, err := m.util(ctx, awsDir, awsProfile, []string{pkg.CommandRetrieveCredentials}).Stdout(ctx)
+	if err != nil {
+		unErr := Error{}
+		_ = json.Unmarshal([]byte(out), &unErr)
+		return Credentials{}, unErr
+	}
+	cred := Credentials{}
+	_ = json.Unmarshal([]byte(out), &cred)
+	return cred, nil
 }
 
-func (m *AwsUtils) GetEcrToken(ctx context.Context, awsDir *dagger.Directory, awsProfile string) (string, error) {
-	return m.util(ctx, awsDir, awsProfile, []string{pkg.CommandEcrGetToken}).Stdout(ctx)
+func (m *AwsUtils) GetEcrToken(ctx context.Context, awsDir *dagger.Directory, awsProfile string) (EcrToken, error) {
+	out, err := m.util(ctx, awsDir, awsProfile, []string{pkg.CommandEcrGetToken}).Stdout(ctx)
+	if err != nil {
+		unErr := Error{}
+		_ = json.Unmarshal([]byte(out), &unErr)
+		return EcrToken{}, unErr
+	}
+	tok := EcrToken{}
+	_ = json.Unmarshal([]byte(out), &tok)
+	return tok, nil
 }
