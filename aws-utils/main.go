@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
 
 	"dagger/aws-utils/internal/dagger"
 )
@@ -148,7 +149,27 @@ func (m *AwsUtils) PushToEcr(ctx context.Context, container *dagger.Container, a
 		if err != nil {
 			return nil, fmt.Errorf("failed to push image: %w", err)
 		}
+		ref, _, _ = strings.Cut(ref, "@")
 		refs = append(refs, ref)
 	}
 	return refs, nil
+}
+
+// UpdateLambdaImage updates the image of a Lambda function.
+func (m *AwsUtils) UpdateLambdaImage(ctx context.Context, awsDir *dagger.Directory, awsProfile string, functionName string, imageRef string) error {
+	cfg, err := m.setupConfig(ctx, awsDir, awsProfile)
+	if err != nil {
+		return err
+	}
+	svc := lambda.NewFromConfig(cfg)
+
+	_, err = svc.UpdateFunctionCode(ctx, &lambda.UpdateFunctionCodeInput{
+		FunctionName: aws.String(functionName),
+		ImageUri:     aws.String(imageRef),
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
