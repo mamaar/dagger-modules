@@ -7,77 +7,129 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"os"
+	"strings"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ecr"
 
 	"dagger/aws-utils/internal/dagger"
-	"dagger/aws-utils/pkg"
 )
 
 const (
-	GoImage     = "golang:1.23"
-	CacheVolume = "aws"
+	SecretAccessKeyID     = "aws-utils:access-key-id"
+	SecretSecretAccessKey = "aws-utils:secret-access-key"
+	SecretSessionToken    = "aws-utils:session-token"
+	SecretEcrPassword     = "aws-utils:ecr-password"
 )
 
 type Credentials struct {
-	AccessKeyID     string `json:"access_key_id"`
-	SecretAccessKey string `json:"secret_access_key"`
-	SessionToken    string `json:"session_token"`
-	Region          string `json:"region"`
+	AccessKeyID     *dagger.Secret `json:"access_key_id"`
+	SecretAccessKey *dagger.Secret `json:"secret_access_key"`
+	SessionToken    *dagger.Secret `json:"session_token"`
+	Region          string         `json:"region"`
 }
 
 type EcrToken struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Endpoint string `json:"endpoint"`
+	Username string         `json:"username"`
+	Password *dagger.Secret `json:"password"`
+	Endpoint string         `json:"endpoint"`
 }
-
-type Error struct {
-	Message string `json:"message"`
-}
-
-func (e Error) Error() string {
-	return e.Message
-}
-
 type AwsUtils struct{}
 
-func (m *AwsUtils) util(ctx context.Context, awsDir *dagger.Directory, awsProfile string, command []string) *dagger.Container {
-	cacheVolume := dag.CacheVolume(CacheVolume)
-	return dag.Container().
-		From(GoImage).
-		WithMountedCache("/go/pkg", cacheVolume).
-		WithDirectory("/root/.aws", awsDir).
-		WithEnvVariable("AWS_PROFILE", awsProfile).
-		WithDirectory("/app", dag.CurrentModule().Source()).
-		WithWorkdir("/app/dagger").
-		WithExec(append([]string{"go", "run", "dagger/aws-utils/cmd"}, command...))
+func (m *AwsUtils) setupConfig(ctx context.Context, awsDir *dagger.Directory, awsProfile string) (aws.Config, error) {
+	_, err := awsDir.Export(ctx, "/root/.aws")
+	if err != nil {
+		return aws.Config{}, err
+	}
+
+	cfg, err := config.LoadDefaultConfig(ctx,
+		config.WithSharedConfigProfile(awsProfile),
+	)
+	if err != nil {
+		return aws.Config{}, err
+	}
+
+	return cfg, nil
 }
 
 // RetrieveCredentials retrieves AWS credentials for the given profile
 func (m *AwsUtils) RetrieveCredentials(ctx context.Context, awsDir *dagger.Directory, awsProfile string) (Credentials, error) {
-	out, err := m.util(ctx, awsDir, awsProfile, []string{pkg.CommandRetrieveCredentials}).Stdout(ctx)
+	cfg, err := m.setupConfig(ctx, awsDir, awsProfile)
 	if err != nil {
-		unErr := Error{}
-		_ = json.Unmarshal([]byte(out), &unErr)
-		return Credentials{}, unErr
+		return Credentials{}, err
 	}
-	cred := Credentials{}
-	_ = json.Unmarshal([]byte(out), &cred)
-	return cred, nil
+
+	// Retrieve credentials
+	creds, err := cfg.Credentials.Retrieve(ctx)
+	if err != nil {
+		return Credentials{}, err
+	}
+
+	accessKeyIDSecret := dag.SetSecret(SecretAccessKeyID, creds.AccessKeyID)
+	secretAccessKeySecret := dag.SetSecret(SecretSecretAccessKey, creds.SecretAccessKey)
+	sessionTokenSecret := dag.SetSecret(SecretSessionToken, creds.SessionToken)
+
+	tokens := Credentials{
+		AccessKeyID:     accessKeyIDSecret,
+		SecretAccessKey: secretAccessKeySecret,
+		SessionToken:    sessionTokenSecret,
+		Region:          cfg.Region,
+	}
+
+	err = json.NewEncoder(os.Stdout).Encode(tokens)
+	if err != nil {
+		return Credentials{}, err
+	}
+
+	return tokens, nil
 }
 
 // GetEcrToken retrieves an ECR token for the given profile. The token consists of username, password and endpoint.
 func (m *AwsUtils) GetEcrToken(ctx context.Context, awsDir *dagger.Directory, awsProfile string) (EcrToken, error) {
-	out, err := m.util(ctx, awsDir, awsProfile, []string{pkg.CommandEcrGetToken}).Stdout(ctx)
+	cfg, err := m.setupConfig(ctx, awsDir, awsProfile)
 	if err != nil {
-		unErr := Error{}
-		_ = json.Unmarshal([]byte(out), &unErr)
-		return EcrToken{}, unErr
+		return EcrToken{}, err
 	}
-	tok := EcrToken{}
-	_ = json.Unmarshal([]byte(out), &tok)
-	return tok, nil
+
+	svc := ecr.NewFromConfig(cfg)
+
+	// Get the tokenResponse
+	tokenResponse, err := svc.GetAuthorizationToken(ctx, &ecr.GetAuthorizationTokenInput{})
+	if err != nil {
+		return EcrToken{}, err
+	}
+
+	if len(tokenResponse.AuthorizationData) == 0 {
+		return EcrToken{}, fmt.Errorf("no authorization data found")
+	}
+
+	token := *tokenResponse.AuthorizationData[0].AuthorizationToken
+	proxyEndpoint := *tokenResponse.AuthorizationData[0].ProxyEndpoint
+
+	tokenDecoded, err := base64.StdEncoding.DecodeString(token)
+	if err != nil {
+		return EcrToken{}, fmt.Errorf("failed to decode ECR tokenResponse: %w", err)
+	}
+
+	username, password, _ := strings.Cut(string(tokenDecoded), ":")
+	passwordSecret := dag.SetSecret(SecretEcrPassword, password)
+
+	endpointUrl, err := url.Parse(proxyEndpoint)
+	if err != nil {
+		return EcrToken{}, fmt.Errorf("failed to parse ECR endpoint: %w", err)
+	}
+
+	return EcrToken{
+		Username: username,
+		Password: passwordSecret,
+		Endpoint: endpointUrl.Host,
+	}, nil
 }
 
 // PushToEcr pushes a container image to ECR. It returns a list of references for the pushed images.
@@ -87,13 +139,11 @@ func (m *AwsUtils) PushToEcr(ctx context.Context, container *dagger.Container, a
 		return nil, fmt.Errorf("failed to get ECR token: %w", err)
 	}
 
-	secret := dag.SetSecret("ecr-token", token.Password)
-
 	var refs []string
 	for _, tag := range tags {
 		uri := fmt.Sprintf("%s/%s:%s", token.Endpoint, imageName, tag)
 		ref, err := container.
-			WithRegistryAuth(token.Endpoint, token.Username, secret).
+			WithRegistryAuth(token.Endpoint, token.Username, token.Password).
 			Publish(ctx, uri)
 		if err != nil {
 			return nil, fmt.Errorf("failed to push image: %w", err)
